@@ -1,5 +1,6 @@
 package com.hoyn.maproute;
 
+import android.app.ProgressDialog;
 import android.content.Context;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
@@ -18,7 +19,6 @@ import com.amap.api.maps2d.LocationSource;
 import com.amap.api.maps2d.MapView;
 import com.amap.api.maps2d.model.BitmapDescriptorFactory;
 import com.amap.api.maps2d.model.LatLng;
-import com.amap.api.maps2d.model.Marker;
 import com.amap.api.maps2d.model.MarkerOptions;
 import com.amap.api.maps2d.model.MyLocationStyle;
 import com.amap.api.services.core.LatLonPoint;
@@ -27,22 +27,33 @@ import com.amap.api.services.geocoder.GeocodeResult;
 import com.amap.api.services.geocoder.GeocodeSearch;
 import com.amap.api.services.geocoder.RegeocodeQuery;
 import com.amap.api.services.geocoder.RegeocodeResult;
+import com.amap.api.services.route.BusRouteResult;
+import com.amap.api.services.route.DrivePath;
+import com.amap.api.services.route.DriveRouteResult;
+import com.amap.api.services.route.RouteSearch;
+import com.amap.api.services.route.WalkRouteResult;
 
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity implements LocationSource,
-        AMapLocationListener, AMap.OnMapClickListener {
+        AMapLocationListener, AMap.OnMapClickListener, RouteSearch.OnRouteSearchListener {
     private AMap aMap;
     private MapView mapView;
     private MarkerOptions markerOption;
     private LocationSource.OnLocationChangedListener mListener;
     private AMapLocationClient mlocationClient;
     private AMapLocationClientOption mLocationOption;
-    private Marker marker2;// 第二点的maker对象
+    private RouteSearch mRouteSearch;
+
     private Context context;
     boolean canAddMaker = false;
+    private boolean isFirstPoint = false;
 
-    private LatLng locPosition ;
+    private LatLng locPosition;
+    private String firstTitle = "";
+    private LatLng locFirst;
+    private String secondTitle = "";
+    private LatLng locSecond;
     private GeocodeSearch geocoderSearch;
 
     @Override
@@ -57,27 +68,47 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
         mapView.onCreate(savedInstanceState);// 此方法必须重写
         init();
 
+        findViewById(R.id.btn_select_first).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                isFirstPoint = true;
+                aMap.clear();
+                //再次点击的
+                showToast("现在可以在地图上选取第一点了");
+                canAddMaker = true;
+                reShowMaker();
+            }
+        });
+
         //选取第二点
         findViewById(R.id.btn_select_second).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                isFirstPoint = false;
                 //再次点击的
-                if(marker2!=null){
-                    aMap.clear();
-                    addMarkersToMap(locPosition);
-                }
+                aMap.clear();
                 showToast("现在可以在地图上选取第二点了");
                 canAddMaker = true;
+                reShowMaker();
             }
         });
-
+        //计算距离
+        findViewById(R.id.btn_getDistance).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showProgressDialog();
+                searchRouteStart();
+            }
+        });
     }
 
     /**
      * 初始化AMap对象
      */
     private void init() {
-         geocoderSearch = new GeocodeSearch(this);
+        geocoderSearch = new GeocodeSearch(this);
+        mRouteSearch = new RouteSearch(this);
+        mRouteSearch.setRouteSearchListener(this);
         if (aMap == null) {
             aMap = mapView.getMap();
             aMap.moveCamera(CameraUpdateFactory.zoomTo(20));
@@ -85,6 +116,7 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
             setUpMap();
         }
     }
+
     /**
      * 设置一些amap的属性
      */
@@ -103,6 +135,7 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
         aMap.setMyLocationEnabled(true);// 设置为true表示显示定位层并可触发定位，false表示隐藏定位层并不可触发定位，默认是false
         // aMap.setMyLocationType()
     }
+
     /**
      * 方法必须重写
      */
@@ -149,10 +182,10 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
             if (amapLocation != null
                     && amapLocation.getErrorCode() == 0) {
                 mListener.onLocationChanged(amapLocation);// 显示系统小蓝点
-                locPosition = new LatLng(amapLocation.getLatitude(),amapLocation.getLongitude());
+                locPosition = new LatLng(amapLocation.getLatitude(), amapLocation.getLongitude());
                 mlocationClient.stopLocation();
             } else {
-                String errText = "定位失败," + amapLocation.getErrorCode()+ ": " + amapLocation.getErrorInfo();
+                String errText = "定位失败," + amapLocation.getErrorCode() + ": " + amapLocation.getErrorInfo();
                 Log.e("AmapErr", errText);
             }
         }
@@ -195,8 +228,8 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
     }
 
 
-    private void showToast(String msg){
-        Toast.makeText(context,msg,Toast.LENGTH_SHORT).show();
+    private void showToast(String msg) {
+        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
     }
 
 
@@ -204,8 +237,8 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
      * 在地图上添加marker
      */
     private void addMarkersToMap(final LatLng latlng) {
-        LatLonPoint latLonPoint = new LatLonPoint(latlng.latitude,latlng.longitude);
-        RegeocodeQuery query = new RegeocodeQuery(latLonPoint, 30000 ,GeocodeSearch.AMAP);
+        LatLonPoint latLonPoint = new LatLonPoint(latlng.latitude, latlng.longitude);
+        RegeocodeQuery query = new RegeocodeQuery(latLonPoint, 200, GeocodeSearch.AMAP);
         geocoderSearch.setOnGeocodeSearchListener(new GeocodeSearch.OnGeocodeSearchListener() {
             /**
              * 逆地理编码回调
@@ -217,6 +250,14 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
                             && result.getRegeocodeAddress().getPois().size() > 0) {
                         List<PoiItem> poiItems = result.getRegeocodeAddress().getPois();
                         String title = poiItems.get(0).getTitle();
+
+                        if (isFirstPoint) {
+                            locFirst = latlng;
+                            firstTitle = title;
+                        } else {
+                            locSecond = latlng;
+                            secondTitle = title;
+                        }
                         //文字显示标注，可以设置显示内容，位置，字体大小颜色，背景色旋转角度,Z值等
                         markerOption = new MarkerOptions();
                         markerOption.position(latlng);
@@ -224,9 +265,12 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
                         markerOption.draggable(true);
                         markerOption.icon(BitmapDescriptorFactory
                                 .fromResource(R.drawable.poi_marker_pressed));
-                        marker2 = aMap.addMarker(markerOption);
-                        marker2.showInfoWindow();
-                    }else{
+                        aMap.addMarker(markerOption).showInfoWindow();
+//                        marker2 = aMap.addMarker(markerOption);
+//                        marker2.showInfoWindow();
+                        reShowMaker();
+
+                    } else {
                         showToast("没有搜索到周边建筑");
                     }
                 } else {
@@ -244,12 +288,121 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
         geocoderSearch.getFromLocationAsyn(query);
     }
 
+    /**
+     * 在地图上添加marker
+     */
+    private void addMarkersToMap(final LatLng latlng, String title) {
+        //文字显示标注，可以设置显示内容，位置，字体大小颜色，背景色旋转角度,Z值等
+        markerOption = new MarkerOptions();
+        markerOption.position(latlng);
+        markerOption.title(title);
+        markerOption.draggable(true);
+        markerOption.icon(BitmapDescriptorFactory
+                .fromResource(R.drawable.poi_marker_pressed));
+        aMap.addMarker(markerOption).showInfoWindow();
+//        marker2 = aMap.addMarker(markerOption);
+//        marker2.showInfoWindow();
+    }
+
     @Override
     public void onMapClick(LatLng latLng) {
-        if(!canAddMaker){
+        if (!canAddMaker) {
             return;
         }
+        //新增坐标覆盖物
         addMarkersToMap(latLng);
         canAddMaker = false;
+
+    }
+
+    //清空之后重新显示
+    private void reShowMaker() {
+        //清空之后重新显示
+        aMap.clear();
+        //后添加的会显示title而先添加的不会
+        if (isFirstPoint) {
+            if (locSecond != null) {
+                addMarkersToMap(locSecond, secondTitle);
+            }
+            if (locFirst != null) {
+                addMarkersToMap(locFirst, firstTitle);
+            }
+        } else {
+            if (locFirst != null) {
+                addMarkersToMap(locFirst, firstTitle);
+            }
+            if (locSecond != null) {
+                addMarkersToMap(locSecond, secondTitle);
+            }
+        }
+    }
+
+    private ProgressDialog progDialog = null;// 搜索时进度条
+
+    /**
+     * 显示进度框
+     */
+    private void showProgressDialog() {
+        if (progDialog == null)
+            progDialog = new ProgressDialog(this);
+        progDialog.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+        progDialog.setIndeterminate(false);
+        progDialog.setCancelable(true);
+        progDialog.setMessage("正在搜索");
+        progDialog.show();
+    }
+
+    /**
+     * 隐藏进度框
+     */
+    private void dissmissProgressDialog() {
+        if (progDialog != null) {
+            progDialog.dismiss();
+        }
+    }
+
+    /**
+     * 开始搜索路径规划方案
+     */
+    public void searchRouteStart() {
+        if (locFirst == null) {
+            showToast("没有设置起点");
+            return;
+        }
+        if (secondTitle == null) {
+            showToast("没有设置终点");
+            return;
+        }
+        showProgressDialog();
+        final RouteSearch.FromAndTo fromAndTo = new RouteSearch.FromAndTo(
+                new LatLonPoint(locFirst.latitude, locFirst.longitude), new LatLonPoint(locSecond.latitude, locSecond.longitude));
+        RouteSearch.DriveRouteQuery query = new RouteSearch.DriveRouteQuery(fromAndTo, RouteSearch.DrivingDefault, null,
+                null, "");// 第一个参数表示路径规划的起点和终点，第二个参数表示驾车模式，第三个参数表示途经点，第四个参数表示避让区域，第五个参数表示避让道路
+        mRouteSearch.calculateDriveRouteAsyn(query);// 异步路径规划驾车模式查询
+    }
+
+    @Override
+    public void onBusRouteSearched(BusRouteResult busRouteResult, int i) {
+
+    }
+
+    @Override
+    public void onDriveRouteSearched(DriveRouteResult driveRouteResult, int errorCode) {
+        dissmissProgressDialog();
+        if (errorCode == 1000) {
+            if (driveRouteResult != null && driveRouteResult.getPaths() != null) {
+                if (driveRouteResult.getPaths().size() > 0) {
+                    final DrivePath drivePath = driveRouteResult.getPaths()
+                            .get(0);
+                    int dis = (int) drivePath.getDistance();
+                    showToast("距离 : "+dis + "米");
+                }
+            }
+        }
+    }
+
+    @Override
+    public void onWalkRouteSearched(WalkRouteResult walkRouteResult, int i) {
+
     }
 }

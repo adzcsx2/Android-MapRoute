@@ -21,11 +21,23 @@
         android:layout_height="wrap_content">
 
         <Button
+            android:id="@+id/btn_select_first"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="选取第一点" />
+        <Button
             android:id="@+id/btn_select_second"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="选取第二点" />
+        <Button
+            android:id="@+id/btn_getDistance"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="计算距离" />
     </LinearLayout>
 
 </LinearLayout>
