@@ -1,9 +1,12 @@
 package com.hoyn.maproute;
 
+import android.content.Context;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
+import android.view.View;
+import android.widget.Toast;
 
 import com.amap.api.location.AMapLocation;
 import com.amap.api.location.AMapLocationClient;
@@ -14,34 +17,71 @@ import com.amap.api.maps2d.CameraUpdateFactory;
 import com.amap.api.maps2d.LocationSource;
 import com.amap.api.maps2d.MapView;
 import com.amap.api.maps2d.model.BitmapDescriptorFactory;
+import com.amap.api.maps2d.model.LatLng;
+import com.amap.api.maps2d.model.Marker;
+import com.amap.api.maps2d.model.MarkerOptions;
 import com.amap.api.maps2d.model.MyLocationStyle;
+import com.amap.api.services.core.LatLonPoint;
+import com.amap.api.services.core.PoiItem;
+import com.amap.api.services.geocoder.GeocodeResult;
+import com.amap.api.services.geocoder.GeocodeSearch;
+import com.amap.api.services.geocoder.RegeocodeQuery;
+import com.amap.api.services.geocoder.RegeocodeResult;
+
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity implements LocationSource,
-        AMapLocationListener {
+        AMapLocationListener, AMap.OnMapClickListener {
     private AMap aMap;
     private MapView mapView;
+    private MarkerOptions markerOption;
     private LocationSource.OnLocationChangedListener mListener;
     private AMapLocationClient mlocationClient;
     private AMapLocationClientOption mLocationOption;
+    private Marker marker2;// 第二点的maker对象
+    private Context context;
+    boolean canAddMaker = false;
+
+    private LatLng locPosition ;
+    private GeocodeSearch geocoderSearch;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
+        context = this;
 
         mapView = (MapView) findViewById(R.id.map);
         mapView.onCreate(savedInstanceState);// 此方法必须重写
         init();
+
+        //选取第二点
+        findViewById(R.id.btn_select_second).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                //再次点击的
+                if(marker2!=null){
+                    aMap.clear();
+                    addMarkersToMap(locPosition);
+                }
+                showToast("现在可以在地图上选取第二点了");
+                canAddMaker = true;
+            }
+        });
+
     }
 
     /**
      * 初始化AMap对象
      */
     private void init() {
+         geocoderSearch = new GeocodeSearch(this);
         if (aMap == null) {
             aMap = mapView.getMap();
             aMap.moveCamera(CameraUpdateFactory.zoomTo(20));
+            aMap.setOnMapClickListener(this);
             setUpMap();
         }
     }
@@ -109,6 +149,7 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
             if (amapLocation != null
                     && amapLocation.getErrorCode() == 0) {
                 mListener.onLocationChanged(amapLocation);// 显示系统小蓝点
+                locPosition = new LatLng(amapLocation.getLatitude(),amapLocation.getLongitude());
                 mlocationClient.stopLocation();
             } else {
                 String errText = "定位失败," + amapLocation.getErrorCode()+ ": " + amapLocation.getErrorInfo();
@@ -151,5 +192,64 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
             mlocationClient.onDestroy();
         }
         mlocationClient = null;
+    }
+
+
+    private void showToast(String msg){
+        Toast.makeText(context,msg,Toast.LENGTH_SHORT).show();
+    }
+
+
+    /**
+     * 在地图上添加marker
+     */
+    private void addMarkersToMap(final LatLng latlng) {
+        LatLonPoint latLonPoint = new LatLonPoint(latlng.latitude,latlng.longitude);
+        RegeocodeQuery query = new RegeocodeQuery(latLonPoint, 30000 ,GeocodeSearch.AMAP);
+        geocoderSearch.setOnGeocodeSearchListener(new GeocodeSearch.OnGeocodeSearchListener() {
+            /**
+             * 逆地理编码回调
+             */
+            @Override
+            public void onRegeocodeSearched(RegeocodeResult result, int rCode) {
+                if (rCode == 1000) {
+                    if (result != null && result.getRegeocodeAddress() != null
+                            && result.getRegeocodeAddress().getPois().size() > 0) {
+                        List<PoiItem> poiItems = result.getRegeocodeAddress().getPois();
+                        String title = poiItems.get(0).getTitle();
+                        //文字显示标注，可以设置显示内容，位置，字体大小颜色，背景色旋转角度,Z值等
+                        markerOption = new MarkerOptions();
+                        markerOption.position(latlng);
+                        markerOption.title(title);
+                        markerOption.draggable(true);
+                        markerOption.icon(BitmapDescriptorFactory
+                                .fromResource(R.drawable.poi_marker_pressed));
+                        marker2 = aMap.addMarker(markerOption);
+                        marker2.showInfoWindow();
+                    }else{
+                        showToast("没有搜索到周边建筑");
+                    }
+                } else {
+                    showToast("没有搜索到周边建筑");
+                }
+
+            }
+
+            @Override
+            public void onGeocodeSearched(GeocodeResult arg0, int arg1) {
+
+            }
+
+        });
+        geocoderSearch.getFromLocationAsyn(query);
+    }
+
+    @Override
+    public void onMapClick(LatLng latLng) {
+        if(!canAddMaker){
+            return;
+        }
+        addMarkersToMap(latLng);
+        canAddMaker = false;
     }
 }
