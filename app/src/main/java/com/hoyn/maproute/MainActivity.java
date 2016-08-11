@@ -5,8 +5,13 @@ import android.content.Context;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.View;
+import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import com.amap.api.location.AMapLocation;
@@ -21,24 +26,35 @@ import com.amap.api.maps2d.model.BitmapDescriptorFactory;
 import com.amap.api.maps2d.model.LatLng;
 import com.amap.api.maps2d.model.MarkerOptions;
 import com.amap.api.maps2d.model.MyLocationStyle;
+import com.amap.api.maps2d.overlay.PoiOverlay;
 import com.amap.api.services.core.LatLonPoint;
 import com.amap.api.services.core.PoiItem;
+import com.amap.api.services.core.SuggestionCity;
 import com.amap.api.services.geocoder.GeocodeResult;
 import com.amap.api.services.geocoder.GeocodeSearch;
 import com.amap.api.services.geocoder.RegeocodeQuery;
 import com.amap.api.services.geocoder.RegeocodeResult;
+import com.amap.api.services.help.Inputtips;
+import com.amap.api.services.help.InputtipsQuery;
+import com.amap.api.services.help.Tip;
+import com.amap.api.services.poisearch.PoiResult;
+import com.amap.api.services.poisearch.PoiSearch;
 import com.amap.api.services.route.BusRouteResult;
 import com.amap.api.services.route.DrivePath;
 import com.amap.api.services.route.DriveRouteResult;
 import com.amap.api.services.route.RouteSearch;
 import com.amap.api.services.route.WalkRouteResult;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity implements LocationSource,
-        AMapLocationListener, AMap.OnMapClickListener, RouteSearch.OnRouteSearchListener {
+        AMapLocationListener, AMap.OnMapClickListener, RouteSearch.OnRouteSearchListener, TextWatcher, Inputtips.InputtipsListener, PoiSearch.OnPoiSearchListener {
     private AMap aMap;
     private MapView mapView;
+    private AutoCompleteTextView searchText;
+    private EditText editCity;// 要输入的城市名字或者城市区号
+    private String keyWord = "";// 要输入的poi搜索关键字
     private MarkerOptions markerOption;
     private LocationSource.OnLocationChangedListener mListener;
     private AMapLocationClient mlocationClient;
@@ -56,6 +72,10 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
     private LatLng locSecond;
     private GeocodeSearch geocoderSearch;
 
+    private int currentPage = 0;// 当前页面，从0开始计数
+    private PoiSearch.Query query;// Poi查询条件类
+    private PoiSearch poiSearch;// POI搜索
+    private PoiResult poiResult; // poi返回的结果
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -100,6 +120,13 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
                 searchRouteStart();
             }
         });
+        //搜索
+        findViewById(R.id.btn_search).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                searchButton();
+            }
+        });
     }
 
     /**
@@ -109,6 +136,9 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
         geocoderSearch = new GeocodeSearch(this);
         mRouteSearch = new RouteSearch(this);
         mRouteSearch.setRouteSearchListener(this);
+        searchText = (AutoCompleteTextView) findViewById(R.id.keyWord);
+        searchText.addTextChangedListener(this);// 添加文本输入框监听事件
+        editCity = (EditText) findViewById(R.id.city);
         if (aMap == null) {
             aMap = mapView.getMap();
             aMap.moveCamera(CameraUpdateFactory.zoomTo(20));
@@ -403,6 +433,110 @@ public class MainActivity extends AppCompatActivity implements LocationSource,
 
     @Override
     public void onWalkRouteSearched(WalkRouteResult walkRouteResult, int i) {
+
+    }
+
+    @Override
+    public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+    }
+
+    @Override
+    public void onTextChanged(CharSequence s, int start, int before, int count) {
+        String newText = s.toString().trim();
+        if (!AMapUtil.IsEmptyOrNullString(newText)) {
+            InputtipsQuery inputquery = new InputtipsQuery(newText, editCity.getText().toString());
+            Inputtips inputTips = new Inputtips(this, inputquery);
+            inputTips.setInputtipsListener(this);
+            inputTips.requestInputtipsAsyn();
+        }
+    }
+
+    @Override
+    public void afterTextChanged(Editable s) {
+
+    }
+
+    @Override
+    public void onGetInputtips(List<Tip> tipList, int rCode) {
+        if (rCode == 1000) {// 正确返回
+            List<String> listString = new ArrayList<String>();
+            for (int i = 0; i < tipList.size(); i++) {
+                listString.add(tipList.get(i).getName());
+                Log.d("name", tipList.get(0).getName());
+            }
+            ArrayAdapter<String> aAdapter = new ArrayAdapter<String>(
+                    getApplicationContext(),
+                    R.layout.route_inputs, listString);
+            searchText.setAdapter(aAdapter);
+            aAdapter.notifyDataSetChanged();
+        } else {
+            showToast("查询失败");
+        }
+    }
+    /**
+     * 点击搜索按钮
+     */
+    public void searchButton() {
+        keyWord = AMapUtil.checkEditText(searchText);
+        if ("".equals(keyWord)) {
+            showToast("请输入搜索关键字");
+            return;
+        } else {
+            doSearchQuery();
+        }
+    }
+    /**
+     * 开始进行poi搜索
+     */
+    protected void doSearchQuery() {
+        showProgressDialog();// 显示进度框
+        currentPage = 0;
+        query = new PoiSearch.Query(keyWord, "", editCity.getText().toString());// 第一个参数表示搜索字符串，第二个参数表示poi搜索类型，第三个参数表示poi搜索区域（空字符串代表全国）
+        query.setPageSize(1);// 设置每页最多返回多少条poiitem
+        query.setPageNum(currentPage);// 设置查第一页
+        query.setCityLimit(true);
+
+        poiSearch = new PoiSearch(this, query);
+        poiSearch.setOnPoiSearchListener(this);
+        poiSearch.searchPOIAsyn();
+    }
+
+    @Override
+    public void onPoiSearched(PoiResult result, int rCode) {
+        dissmissProgressDialog();// 隐藏对话框
+        if (rCode == 1000) {
+            if (result != null && result.getQuery() != null) {// 搜索poi的结果
+                if (result.getQuery().equals(query)) {// 是否是同一条
+                    poiResult = result;
+                    // 取得搜索到的poiitems有多少页
+                    List<PoiItem> poiItems = poiResult.getPois();// 取得第一页的poiitem数据，页数从数字0开始
+                    List<SuggestionCity> suggestionCities = poiResult
+                            .getSearchSuggestionCitys();// 当搜索不到poiitem数据时，会返回含有搜索关键字的城市信息
+
+                    if (poiItems != null && poiItems.size() > 0) {
+//                        aMap.clear();// 清理之前的图标
+                        PoiOverlay poiOverlay = new PoiOverlay(aMap, poiItems);
+                        poiOverlay.removeFromMap();
+                        poiOverlay.addToMap();
+                        poiOverlay.zoomToSpan();
+                    } else if (suggestionCities != null
+                            && suggestionCities.size() > 0) {
+//                        showSuggestCity(suggestionCities);
+                    } else {
+                        showToast("对不起，没有搜索到相关数据");
+                    }
+                }
+            } else {
+                showToast("对不起，没有搜索到相关数据");
+            }
+        } else {
+            showToast("对不起，没有搜索到相关数据");
+        }
+    }
+
+    @Override
+    public void onPoiItemSearched(PoiItem poiItem, int i) {
 
     }
 }
